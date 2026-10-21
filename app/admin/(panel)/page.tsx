@@ -8,8 +8,10 @@ import {
   Sparkles,
 } from "lucide-react";
 import { AdminLinkButton, AdminPage } from "@/components/admin/PageShell";
+import { SetupPanel } from "@/components/admin/SetupPanel";
 import { ADMIN_BASE, ADMIN_PATH_IS_CUSTOM } from "@/lib/admin-path";
 import { requireAdminPage } from "@/lib/auth";
+import { csrfToken } from "@/lib/csrf";
 import { formatDate, formatPrice } from "@/lib/format";
 import { prisma } from "@/lib/prisma";
 import { daysAgo } from "@/lib/time-window";
@@ -69,6 +71,8 @@ export default async function DashboardPage() {
     }),
   ]);
 
+  const csrf = await csrfToken();
+
   const topProducts = await prisma.product.findMany({
     where: { id: { in: topInquiries.map((row) => row.productId!) } },
     select: { id: true, name: true, slug: true },
@@ -96,6 +100,8 @@ export default async function DashboardPage() {
         </AdminLinkButton>
       }
     >
+      {productCount === 0 ? <SetupPanel csrf={csrf} /> : null}
+
       {whatsappMissing ? (
         <div className="mb-6 flex flex-col gap-3 border border-amber-300 bg-amber-50 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex gap-3">

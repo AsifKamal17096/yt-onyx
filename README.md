@@ -155,7 +155,7 @@ a blur placeholder. Originals are not kept — nothing on the site serves them.
 | `npm run build` | Production build |
 | `npm start` | Run the production build |
 | `npm run check` | Lint, type-check and build — run this before deploying |
-| `npm run seed` | Seed categories, attributes and the demo catalogue |
+| `npm run seed` | Seed categories, attributes and the demo catalogue (the admin's setup button does the same thing) |
 | `npm run db:migrate` | Create and apply a migration after a schema change |
 | `npm run db:deploy` | Apply existing migrations (use this on the server) |
 | `npm run db:studio` | Prisma Studio, a database browser |
@@ -251,18 +251,20 @@ prisma migrate deploy && next build
 
 so the schema is created or updated on every deployment, before the build.
 
-### 7.4 Seed the first time
+### 7.4 Fill the catalogue the first time
 
-A fresh database has no categories, attribute lists or settings row. Run the
-seed once from your own machine, pointed at the production database:
+A fresh database has no categories, attribute lists or settings row. Sign in
+at `https://your-site/<ADMIN_PATH>` and the dashboard offers a **Set up my
+catalogue** button, which creates all of it — categories, attribute lists,
+settings, testimonials and eight demo products with imagery — in about a
+minute.
 
-```bash
-# temporarily put the production DATABASE_URL in your local .env
-npm run seed
-```
+It only appears while the catalogue is empty, and refuses to run once there
+are products, so it cannot overwrite real work. There is no need to copy the
+production database credentials onto your own machine.
 
-Then sign in at `https://your-site/<ADMIN_PATH>`, set the WhatsApp number, and
-delete the demo products once your own are in.
+Then set the WhatsApp number in Site settings, and delete the demo products
+once your own are in.
 
 ### 7.5 What is different on Vercel
 
