@@ -18,6 +18,9 @@ import { daysAgo } from "@/lib/time-window";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
+// Generating the demo catalogue's imagery runs inside this route's request.
+export const maxDuration = 60;
+
 export default async function DashboardPage() {
   const session = await requireAdminPage();
 

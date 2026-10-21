@@ -18,9 +18,9 @@ import type { ActionState } from "@/lib/action-state";
  * poor trade.
  *
  * It refuses to run once there are products, so it cannot be used to undo
- * real work by accident.
+ * real work by accident. The time budget it needs is declared on the
+ * dashboard route, since a "use server" file may only export async functions.
  */
-export const maxDuration = 60;
 
 /** Confirms images can actually be written before generating sixteen of them. */
 async function storageWorks(): Promise<string | null> {
