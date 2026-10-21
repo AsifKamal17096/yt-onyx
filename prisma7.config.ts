@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
-import { databaseUrlOrEmpty } from "./lib/database-url";
+import { migrationDatabaseUrl } from "./lib/database-url";
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
@@ -10,10 +10,12 @@ export default defineConfig({
     seed: "tsx prisma/seed.ts",
   },
   datasource: {
-    // Read without throwing: this file is loaded by every Prisma command,
-    // including `prisma generate`, which runs during `npm install` and needs
-    // no database at all. Commands that do need one fail on their own with a
-    // clear message.
-    url: databaseUrlOrEmpty(),
+    // The direct, unpooled connection: Prisma Migrate takes a session-level
+    // advisory lock, which a transaction-mode pooler cannot hold.
+    //
+    // Read without throwing, because this file is loaded by every Prisma
+    // command — including `prisma generate`, which runs during `npm install`
+    // and needs no database at all.
+    url: migrationDatabaseUrl(),
   },
 });
