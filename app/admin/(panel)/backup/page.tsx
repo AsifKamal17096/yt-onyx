@@ -3,6 +3,7 @@ import { Download, HardDrive } from "lucide-react";
 import { AdminPage } from "@/components/admin/PageShell";
 import { requireAdminPage } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { usingBlobStorage } from "@/lib/storage";
 
 export const metadata: Metadata = { title: "Backup" };
 
@@ -27,7 +28,10 @@ export default async function BackupPage() {
           <div>
             <h2 className="font-serif text-xl">What is included</h2>
             <ul className="mt-3 space-y-1.5 text-sm text-muted">
-              <li>{products} products and {images} photographs</li>
+              <li>
+                {products} products and {images} photographs
+                {usingBlobStorage ? " (listed as direct links)" : ""}
+              </li>
               <li>{categories} categories, plus stone types, colours and finishes</li>
               <li>{inquiries} inquiry records</li>
               <li>Your site settings, including the WhatsApp number and template</li>
@@ -55,14 +59,18 @@ export default async function BackupPage() {
         <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-relaxed text-muted">
           <li>Stop the application on the server.</li>
           <li>
-            Put <code className="text-ink">database/dev.db</code> back in the{" "}
-            <code className="text-ink">prisma/</code> folder.
+            Recreate the schema with{" "}
+            <code className="text-ink">prisma migrate deploy</code>.
           </li>
           <li>
-            Put the <code className="text-ink">uploads/</code> folder back where{" "}
-            <code className="text-ink">UPLOADS_DIR</code> points.
+            Import <code className="text-ink">content.json</code> back into the
+            database.
           </li>
-          <li>Start the application again.</li>
+          <li>
+            {usingBlobStorage
+              ? "Images are already safe in blob storage; the URL list is only there if you want local copies."
+              : "Put the uploads folder back where UPLOADS_DIR points."}
+          </li>
         </ol>
       </div>
     </AdminPage>

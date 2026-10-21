@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Trash2, UploadCloud } from "lucide-react";
 import { useToast } from "@/components/admin/Toast";
+import { downscaleForUpload } from "@/lib/downscale-image";
 import { CSRF_FIELD } from "@/lib/csrf-field";
 import { cn } from "@/lib/cn";
 
@@ -39,7 +40,13 @@ export function SingleImageUpload({
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  const upload = (file: File) => {
+  const upload = async (original: File) => {
+    setBusy(true);
+    setProgress(0);
+
+    // Resized in the browser first; serverless hosts cap request bodies.
+    const file = await downscaleForUpload(original);
+
     const form = new FormData();
     form.append(CSRF_FIELD, csrf);
     form.append("target", target);
@@ -75,8 +82,6 @@ export function SingleImageUpload({
       toast("Upload failed — check your connection.", "error");
     });
 
-    setBusy(true);
-    setProgress(0);
     request.send(form);
   };
 
@@ -91,7 +96,7 @@ export function SingleImageUpload({
         onDrop={(event) => {
           event.preventDefault();
           const file = event.dataTransfer.files?.[0];
-          if (file) upload(file);
+          if (file) void upload(file);
         }}
         className={cn(
           "relative flex items-center justify-center overflow-hidden border border-dashed border-line bg-white",
@@ -139,7 +144,7 @@ export function SingleImageUpload({
           className="hidden"
           onChange={(event) => {
             const file = event.target.files?.[0];
-            if (file) upload(file);
+            if (file) void upload(file);
             event.target.value = "";
           }}
         />

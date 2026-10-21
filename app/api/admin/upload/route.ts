@@ -20,11 +20,15 @@ import { storage } from "@/lib/storage";
  * upload progress and that means XMLHttpRequest. Every file is validated,
  * normalised by Sharp and written through the storage adapter.
  *
+ * Sharp work on several photographs can outlast the default budget.
+ *
  * `target` decides where the result is attached:
  *   product  + id -> a new row in the product gallery
  *   category + id -> the category's single image
  *   hero / logo   -> the matching field in site settings
  */
+export const maxDuration = 60;
+
 export async function POST(request: Request) {
   try {
     await requireAdmin();

@@ -1,15 +1,20 @@
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { del, head, put } from "@vercel/blob";
 
 /**
  * Storage adapter.
  *
  * Uploaded files are referenced everywhere by an opaque *key* such as
  * "products/2026/abc123.webp" — never by a filesystem path or a public URL.
- * That indirection is the whole point: swapping the local-disk implementation
- * below for Cloudinary or S3 means writing one more object with these five
- * methods and changing the `storage` export. Nothing else in the app changes.
+ * That indirection is the whole point: two implementations live below and the
+ * rest of the application cannot tell them apart.
+ *
+ *  - **Vercel Blob** is used whenever BLOB_READ_WRITE_TOKEN is present, which
+ *    is the case on Vercel. Serverless filesystems are read-only and
+ *    disposable, so uploads have to live outside the deployment.
+ *  - **Local disk** is used otherwise, for development and for a VPS.
  */
 export interface StorageAdapter {
   save(key: string, data: Buffer): Promise<void>;
@@ -90,7 +95,80 @@ class LocalDiskStorage implements StorageAdapter {
   }
 }
 
-export const storage: StorageAdapter = new LocalDiskStorage();
+/**
+ * Vercel Blob.
+ *
+ * A blob URL normally gets a random suffix chosen at upload time, which would
+ * make it impossible to derive from the key. `addRandomSuffix: false` keeps
+ * the two in step, and BLOB_PUBLIC_BASE_URL (the store's
+ * https://<id>.public.blob.vercel-storage.com address) completes the URL.
+ */
+class VercelBlobStorage implements StorageAdapter {
+  private base(): string {
+    const configured = process.env.BLOB_PUBLIC_BASE_URL?.trim();
+    if (!configured) {
+      throw new Error(
+        "BLOB_PUBLIC_BASE_URL is not set. Copy the https://<id>.public.blob.vercel-storage.com address from your Vercel Blob store.",
+      );
+    }
+    return configured.replace(/\/+$/, "");
+  }
+
+  private assertKey(key: string) {
+    if (!isValidStorageKey(key)) {
+      throw new Error(`Invalid storage key: ${key}`);
+    }
+  }
+
+  async save(key: string, data: Buffer): Promise<void> {
+    this.assertKey(key);
+    await put(key, data, {
+      access: "public",
+      addRandomSuffix: false,
+      // Keys are unique per upload, so the bytes behind one never change.
+      cacheControlMaxAge: 31536000,
+      allowOverwrite: true,
+    });
+  }
+
+  async read(key: string): Promise<Buffer> {
+    const response = await fetch(this.url(key));
+    if (!response.ok) throw new Error(`Blob not found: ${key}`);
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  async stream(key: string) {
+    const buffer = await this.read(key);
+    const { Readable } = await import("node:stream");
+    return { stream: Readable.from(buffer), size: buffer.length };
+  }
+
+  async delete(key: string): Promise<void> {
+    this.assertKey(key);
+    await del(this.url(key));
+  }
+
+  async exists(key: string): Promise<boolean> {
+    try {
+      await head(this.url(key));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  url(key: string): string {
+    this.assertKey(key);
+    return `${this.base()}/${key}`;
+  }
+}
+
+/** True when the app is running against Vercel Blob rather than local disk. */
+export const usingBlobStorage = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+
+export const storage: StorageAdapter = usingBlobStorage
+  ? new VercelBlobStorage()
+  : new LocalDiskStorage();
 
 /** Convenience for components: turns a nullable key into a usable src. */
 export function mediaUrl(key: string | null | undefined): string | null {

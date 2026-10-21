@@ -19,7 +19,7 @@ const csp = [
   "object-src 'none'",
   "frame-ancestors 'self'",
   "form-action 'self'",
-  "img-src 'self' data: blob:",
+  "img-src 'self' data: blob: https://*.public.blob.vercel-storage.com",
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
   `script-src 'self' 'unsafe-inline'${isProduction ? "" : " 'unsafe-eval'"}`,
@@ -53,18 +53,17 @@ const nextConfig: NextConfig = {
   partialPrefetching: true,
 
   // Native and binary-heavy packages must stay outside the server bundle.
-  serverExternalPackages: [
-    "better-sqlite3",
-    "@prisma/adapter-better-sqlite3",
-    "sharp",
-    "archiver",
-  ],
+  serverExternalPackages: ["sharp", "archiver"],
 
   poweredByHeader: false,
 
   images: {
-    // Product images are served from /api/media and are already WebP.
+    // Product images are already WebP, served from /api/media on a VPS or
+    // straight from Vercel Blob in production.
     formats: ["image/webp"],
+    remotePatterns: [
+      { protocol: "https", hostname: "*.public.blob.vercel-storage.com" },
+    ],
     deviceSizes: [360, 480, 640, 828, 1080, 1280, 1600, 1920],
     imageSizes: [96, 160, 240, 320],
   },

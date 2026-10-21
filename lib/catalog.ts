@@ -273,16 +273,16 @@ export async function searchProducts(query: ProductQuery) {
   }
 
   if (query.q) {
-    // SQLite's LIKE is case-insensitive for ASCII. On PostgreSQL add
-    // `mode: "insensitive"` to each clause when you switch provider.
+    // PostgreSQL's LIKE is case-sensitive, hence the explicit mode.
     const term = query.q.trim();
+    const insensitive = { contains: term, mode: "insensitive" } as const;
     where.OR = [
-      { name: { contains: term } },
-      { sku: { contains: term } },
-      { shortDescription: { contains: term } },
-      { description: { contains: term } },
-      { stoneType: { name: { contains: term } } },
-      { category: { name: { contains: term } } },
+      { name: insensitive },
+      { sku: insensitive },
+      { shortDescription: insensitive },
+      { description: insensitive },
+      { stoneType: { name: insensitive } },
+      { category: { name: insensitive } },
     ];
   }
 

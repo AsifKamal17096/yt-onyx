@@ -1,10 +1,8 @@
 // YT Onyx — data model
 //
-// Portability note: the only Postgres-specific change needed later is
-//   datasource db { provider = "postgresql" }
-// plus swapping the driver adapter in lib/prisma.ts (@prisma/adapter-pg) and
-// the DATABASE_URL. No SQLite-only types or raw SQL are used anywhere.
-// Money is stored as INTEGER cents so it stays exact on every engine.
+// Runs on PostgreSQL (Neon in production). Money is stored as INTEGER cents
+// so it stays exact, and no provider-specific types or raw SQL are used, so
+// the schema would move to another engine with only this provider line.
 
 generator client {
   provider = "prisma-client"
@@ -12,7 +10,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 /// Stock status shown on the product page.

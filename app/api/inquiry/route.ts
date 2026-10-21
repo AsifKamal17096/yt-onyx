@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { rateLimit } from "@/lib/rate-limit";
 import { visitorFromHeaders } from "@/lib/request-info";
 
 /**
@@ -25,19 +24,25 @@ const BodySchema = z.object({
 });
 
 // 20 logged clicks per 10 minutes per visitor is far above honest use.
+// The limit counts rows in the inquiry log itself rather than using an
+// in-memory counter: serverless instances do not share memory, so a counter
+// held in one of them would let the same visitor through again and again.
 const LIMIT = 20;
 const WINDOW_MS = 10 * 60 * 1000;
 
 export async function POST(request: Request) {
   const { ipHash, country } = visitorFromHeaders(request.headers);
 
-  const limit = rateLimit(`inquiry:${ipHash}`, LIMIT, WINDOW_MS);
-  if (!limit.ok) {
+  const recent = await prisma.inquiry.count({
+    where: { ipHash, createdAt: { gte: new Date(Date.now() - WINDOW_MS) } },
+  });
+
+  if (recent >= LIMIT) {
     return Response.json(
       { ok: false, error: "rate_limited" },
       {
         status: 429,
-        headers: { "Retry-After": String(limit.retryAfterSeconds) },
+        headers: { "Retry-After": String(Math.ceil(WINDOW_MS / 1000)) },
       },
     );
   }

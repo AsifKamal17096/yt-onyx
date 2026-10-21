@@ -1,22 +1,25 @@
-import { rm, stat } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import crypto from "node:crypto";
+import { stat } from "node:fs/promises";
 import { PassThrough, Readable } from "node:stream";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 import { ZipArchive } from "archiver";
 import { NotAuthorizedError, requireAdmin } from "@/lib/auth";
-import { resolveDatabaseUrl } from "@/lib/database-url";
 import { prisma } from "@/lib/prisma";
-import { uploadsRoot } from "@/lib/storage";
+import { storage, uploadsRoot, usingBlobStorage } from "@/lib/storage";
 
 /**
- * Downloads a zip containing the database and the uploads folder.
+ * Downloads everything that cannot be rebuilt from the code.
  *
- * The database is copied with SQLite's VACUUM INTO rather than by reading the
- * file directly: that produces a consistent snapshot even if a write happens
- * mid-backup, and it compacts the file at the same time.
+ * What goes into the zip depends on where the site runs:
+ *
+ *  - **Local disk** (development, VPS): a JSON export of every table plus the
+ *    whole uploads folder, so the zip alone can restore the site.
+ *  - **Vercel Blob**: the same JSON export plus a manifest of image URLs. The
+ *    images are not copied — they live in Blob, which is already replicated,
+ *    and pulling gigabytes through a serverless function to re-zip them would
+ *    time out. The manifest makes fetching them one command.
  */
+export const maxDuration = 60;
+
 export async function GET() {
   try {
     await requireAdmin();
@@ -32,55 +35,108 @@ export async function GET() {
   const passthrough = new PassThrough();
   archive.pipe(passthrough);
 
-  let snapshotPath: string | null = null;
-  const databaseUrl = resolveDatabaseUrl();
+  // --- content ------------------------------------------------------------
+  const [
+    categories,
+    stoneTypes,
+    colors,
+    finishes,
+    products,
+    images,
+    testimonials,
+    inquiries,
+    settings,
+  ] = await Promise.all([
+    prisma.category.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.stoneType.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.color.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.finish.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.product.findMany({ orderBy: { createdAt: "asc" } }),
+    prisma.productImage.findMany({ orderBy: { createdAt: "asc" } }),
+    prisma.testimonial.findMany({ orderBy: { sortOrder: "asc" } }),
+    prisma.inquiry.findMany({ orderBy: { createdAt: "desc" }, take: 5000 }),
+    prisma.siteSettings.findUnique({ where: { id: 1 } }),
+  ]);
 
-  if (databaseUrl.startsWith("file:")) {
-    snapshotPath = path.join(
-      os.tmpdir(),
-      `ytonyx-${crypto.randomBytes(6).toString("hex")}.db`,
-    );
-    // VACUUM INTO needs a literal path; the value is generated above, never
-    // taken from the request.
-    await prisma.$executeRawUnsafe(
-      `VACUUM INTO '${snapshotPath.replace(/\\/g, "/").replace(/'/g, "''")}'`,
-    );
-    archive.file(snapshotPath, { name: "database/dev.db" });
-  } else {
+  // The password hash never belongs in a file that gets emailed around.
+  const safeSettings = settings
+    ? {
+        ...settings,
+        adminPasswordHash: settings.adminPasswordHash ? "[redacted]" : null,
+      }
+    : null;
+
+  archive.append(
+    JSON.stringify(
+      {
+        exportedAt: new Date().toISOString(),
+        categories,
+        stoneTypes,
+        colors,
+        finishes,
+        products,
+        productImages: images,
+        testimonials,
+        inquiries,
+        siteSettings: safeSettings,
+      },
+      null,
+      2,
+    ),
+    { name: "content.json" },
+  );
+
+  // --- images -------------------------------------------------------------
+  if (usingBlobStorage) {
+    const urls = images.flatMap((image) => [
+      storage.url(image.fileKey),
+      storage.url(image.thumbKey),
+    ]);
+
     archive.append(
-      "This installation does not use SQLite. Back the database up with the tools for your database server (for example pg_dump).\n",
-      { name: "database/README.txt" },
+      [
+        "Every product image, as a direct URL.",
+        "",
+        "These files live in Vercel Blob, outside the deployment. To pull a",
+        "local copy of all of them:",
+        "",
+        "  wget -i image-urls.txt -P images/",
+        "",
+        ...urls,
+        "",
+      ].join("\n"),
+      { name: "image-urls.txt" },
     );
-  }
-
-  const uploads = uploadsRoot();
-  try {
-    await stat(uploads);
-    archive.directory(uploads, "uploads");
-  } catch {
-    archive.append("No uploads yet.\n", { name: "uploads/README.txt" });
+  } else {
+    const uploads = uploadsRoot();
+    try {
+      await stat(uploads);
+      archive.directory(uploads, "uploads");
+    } catch {
+      archive.append("No uploads yet.\n", { name: "uploads/README.txt" });
+    }
   }
 
   archive.append(
     [
       `YT Onyx backup — ${new Date().toISOString()}`,
       "",
-      "database/dev.db  SQLite snapshot (consistent copy via VACUUM INTO)",
-      "uploads/         every processed product and site image",
+      "content.json     every row of every table, as JSON",
+      usingBlobStorage
+        ? "image-urls.txt   direct links to each stored image"
+        : "uploads/         every processed product and site image",
       "",
-      "To restore: stop the app, put dev.db back in prisma/ and the uploads",
-      "folder back where UPLOADS_DIR points, then start the app again.",
+      "The admin password hash is redacted on purpose; it lives in your",
+      "environment variables, not in here.",
+      "",
+      "To restore: recreate the schema with `prisma migrate deploy`, then",
+      "import content.json. Keep this file somewhere other than the server.",
       "",
     ].join("\n"),
     { name: "README.txt" },
   );
 
   void archive.finalize();
-
-  // Remove the temporary snapshot once the archive has been written.
-  archive.on("end", () => {
-    if (snapshotPath) void rm(snapshotPath, { force: true });
-  });
 
   const body = Readable.toWeb(
     passthrough,

@@ -1,4 +1,4 @@
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/lib/generated/prisma/client";
 import { resolveDatabaseUrl } from "@/lib/database-url";
 
@@ -8,12 +8,15 @@ import { resolveDatabaseUrl } from "@/lib/database-url";
  * In development Next.js reloads modules on every change, so the instance is
  * cached on globalThis to avoid opening a new SQLite handle each time.
  *
- * To switch to PostgreSQL: npm i @prisma/adapter-pg pg, then replace the two
- * adapter lines below with `new PrismaPg({ connectionString: ... })` and change
- * the provider in prisma/schema.prisma.
+ * The driver adapter keeps a pool per process. On Vercel each serverless
+ * instance gets its own, which is why the pool is deliberately small — Neon's
+ * pooled connection string (the one ending in -pooler) handles the fan-out.
  */
 function createPrismaClient() {
-  const adapter = new PrismaBetterSqlite3({ url: resolveDatabaseUrl() });
+  const adapter = new PrismaPg({
+    connectionString: resolveDatabaseUrl(),
+    max: 3,
+  });
 
   return new PrismaClient({
     adapter,

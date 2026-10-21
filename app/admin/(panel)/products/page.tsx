@@ -33,10 +33,11 @@ export default async function ProductsAdminPage(
 
   const where: Prisma.ProductWhereInput = {};
   if (q) {
+    const insensitive = { contains: q, mode: "insensitive" } as const;
     where.OR = [
-      { name: { contains: q } },
-      { sku: { contains: q } },
-      { shortDescription: { contains: q } },
+      { name: insensitive },
+      { sku: insensitive },
+      { shortDescription: insensitive },
     ];
   }
   if (category) where.category = { slug: category };

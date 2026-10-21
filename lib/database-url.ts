@@ -1,30 +1,16 @@
-import path from "node:path";
-
 /**
- * Resolves DATABASE_URL to an absolute location.
+ * Reads DATABASE_URL and fails loudly if it is missing.
  *
- * SQLite file URLs are relative by convention, but the Prisma CLI resolves them
- * against the schema folder while the runtime driver adapter resolves them
- * against the process working directory. That mismatch silently creates two
- * different database files, so both sides call this helper instead: a relative
- * `file:` URL always means "inside the prisma/ folder of the project root".
- *
- * Non-file URLs (postgresql://, mysql://, …) are returned untouched, so
- * switching providers needs no change here.
+ * Neon (and most hosted Postgres) give two connection strings: a direct one
+ * and a pooled one whose host contains "-pooler". Serverless functions should
+ * use the pooled string, which is what Vercel sets by default.
  */
 export function resolveDatabaseUrl(raw = process.env.DATABASE_URL): string {
   if (!raw) {
     throw new Error(
-      "DATABASE_URL is not set. Copy .env.example to .env and try again.",
+      "DATABASE_URL is not set. Copy .env.example to .env and add your PostgreSQL connection string.",
     );
   }
 
-  if (!raw.startsWith("file:")) return raw;
-
-  const filePath = raw.slice("file:".length);
-  if (path.isAbsolute(filePath)) return raw;
-
-  const absolute = path.resolve(process.cwd(), "prisma", filePath);
-  // Forward slashes keep the URL valid on Windows too.
-  return `file:${absolute.split(path.sep).join("/")}`;
+  return raw;
 }

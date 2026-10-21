@@ -12,6 +12,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { useToast } from "@/components/admin/Toast";
+import { downscaleForUpload } from "@/lib/downscale-image";
 import { CSRF_FIELD } from "@/lib/csrf-field";
 import { cn } from "@/lib/cn";
 
@@ -59,14 +60,20 @@ export function ImageManager({
         .filter(Boolean) as ManagedImage[])
     : images;
 
-  const upload = (files: FileList | File[]) => {
+  const upload = async (files: FileList | File[]) => {
     const list = Array.from(files);
     if (list.length === 0) return;
+
+    setProgress(0);
+
+    // Large photographs are resized in the browser first: serverless hosts
+    // reject request bodies over a few megabytes.
+    const prepared = await Promise.all(list.map(downscaleForUpload));
 
     const form = new FormData();
     form.append("productId", productId);
     form.append(CSRF_FIELD, csrf);
-    for (const file of list) form.append("files", file);
+    for (const file of prepared) form.append("files", file);
 
     const request = new XMLHttpRequest();
     request.open("POST", "/api/admin/upload");
@@ -110,7 +117,6 @@ export function ImageManager({
       toast("Upload failed — check your connection.", "error");
     });
 
-    setProgress(0);
     request.send(form);
   };
 
@@ -143,7 +149,7 @@ export function ImageManager({
         onDrop={(event) => {
           event.preventDefault();
           setDragOver(false);
-          if (event.dataTransfer.files?.length) upload(event.dataTransfer.files);
+          if (event.dataTransfer.files?.length) void upload(event.dataTransfer.files);
         }}
         className={cn(
           "flex flex-col items-center justify-center border-2 border-dashed px-6 py-10 text-center transition-colors",
@@ -190,7 +196,7 @@ export function ImageManager({
           multiple
           className="hidden"
           onChange={(event) => {
-            if (event.target.files) upload(event.target.files);
+            if (event.target.files) void upload(event.target.files);
             event.target.value = "";
           }}
         />

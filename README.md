@@ -20,10 +20,10 @@ requires an external service.
 4. [The admin panel](#4-the-admin-panel)
 5. [Commands](#5-commands)
 6. [Project structure](#6-project-structure)
-7. [Deploying to a VPS](#7-deploying-to-a-vps)
-8. [Connecting your domain with HTTPS](#8-connecting-your-domain-with-https)
-9. [Backups](#9-backups)
-10. [Switching to PostgreSQL later](#10-switching-to-postgresql-later)
+7. [Deploying to Vercel](#7-deploying-to-vercel)
+8. [Deploying to a VPS instead](#8-deploying-to-a-vps-instead)
+9. [Connecting your domain with HTTPS](#9-connecting-your-domain-with-https)
+10. [Backups](#10-backups)
 11. [Moving images to S3 or Cloudinary later](#11-moving-images-to-s3-or-cloudinary-later)
 12. [Troubleshooting](#12-troubleshooting)
 13. [Security notes](#13-security-notes)
@@ -32,20 +32,26 @@ requires an external service.
 
 ## 1. Running it locally
 
-Requirements: **Node.js 20 or newer** (built and tested on 24) and npm. Nothing
-else — no database server, no Docker, no accounts.
+Requirements: **Node.js 20 or newer** (built and tested on 24), npm, and a
+**PostgreSQL database**. The free tier at [neon.com](https://neon.com) is
+plenty for development; create a database there and copy its connection
+string.
 
 ```bash
 npm install
 cp .env.example .env        # Windows: copy .env.example .env
-npx prisma migrate dev      # creates prisma/dev.db and applies the schema
+# put your PostgreSQL connection string in DATABASE_URL, then:
+npx prisma migrate deploy   # creates the tables
 npm run seed                # 8 categories, the attribute lists, 8 demo products
 npm run dev                 # http://localhost:3000
 ```
 
-Then open `.env` and fill in the four blanks: `ADMIN_EMAIL`,
-`ADMIN_PASSWORD_HASH` (next section), `SESSION_SECRET` and `IP_HASH_SALT`
-(both from `npm run secret`).
+Also fill in `ADMIN_EMAIL`, `ADMIN_PASSWORD_HASH` (next section),
+`SESSION_SECRET` and `IP_HASH_SALT` (both from `npm run secret`).
+
+Images are written to the local `uploads/` folder unless a
+`BLOB_READ_WRITE_TOKEN` is present, in which case they go to Vercel Blob. You
+do not need blob storage for local work.
 
 The eight seeded products are **demo data**. They are flagged as such, show a
 "Demo" badge in the admin list, and can be filtered and bulk-deleted from
@@ -183,7 +189,7 @@ lib/
   prisma.ts storage.ts images.ts catalog.ts settings.ts whatsapp.ts
   auth.ts session.ts csrf.ts rate-limit.ts revalidate.ts seo.ts …
 prisma/
-  schema.prisma migrations/ seed.ts dev.db
+  schema.prisma migrations/ seed.ts
 scripts/              admin-hash, secret, clean-logo, reset-db-password
 uploads/              uploaded images (not in git — back this up)
 proxy.ts              admin routing, auth gate, CSRF cookie, noindex headers
@@ -196,13 +202,88 @@ everything else stays cached.
 
 ---
 
-## 7. Deploying to a VPS
+## 7. Deploying to Vercel
+
+Vercel runs the site on serverless functions, whose filesystem is read-only
+and thrown away between requests. That means two things have to live outside
+the deployment: the database and the uploaded images. Both are wired up
+already — Postgres through Prisma, and Vercel Blob through the storage
+adapter — so the work is configuration rather than code.
+
+### 7.1 Create the project and its storage
+
+1. Sign in to [vercel.com](https://vercel.com) with GitHub, then
+   **Add New → Project** and import this repository. Do not deploy yet.
+2. In the project, open **Storage → Create Database → Neon (Postgres)**.
+   Vercel adds `DATABASE_URL` to the project automatically.
+3. **Storage → Create → Blob**. Vercel adds `BLOB_READ_WRITE_TOKEN`.
+4. Open the Blob store and copy its public address — it looks like
+   `https://abc123xyz.public.blob.vercel-storage.com`.
+
+### 7.2 Environment variables
+
+**Settings → Environment Variables**, for Production, Preview and Development:
+
+| Name | Value |
+| --- | --- |
+| `DATABASE_URL` | added by the Neon integration |
+| `BLOB_READ_WRITE_TOKEN` | added by the Blob integration |
+| `BLOB_PUBLIC_BASE_URL` | the address from step 4, no trailing slash |
+| `NEXT_PUBLIC_SITE_URL` | `https://your-domain.com` (or the `.vercel.app` URL at first) |
+| `ADMIN_PATH` | something unguessable, e.g. `studio-7h2k` |
+| `ADMIN_EMAIL` | the address you sign in with |
+| `ADMIN_PASSWORD_HASH` | from `npm run admin:hash` — **see the warning below** |
+| `SESSION_SECRET` | from `npm run secret` |
+| `IP_HASH_SALT` | from `npm run secret` |
+
+> **Paste the hash *without* the backslashes.** `npm run admin:hash` escapes
+> every `$` as `\$` because .env files expand variables. Vercel's dashboard
+> does not, so paste the plain `$2b$12$...` form there. Escaped backslashes in
+> Vercel would corrupt the hash exactly as unescaped ones corrupt .env.
+
+### 7.3 Deploy
+
+Press **Deploy**. The build command is set in `vercel.json`:
+
+```
+prisma migrate deploy && next build
+```
+
+so the schema is created or updated on every deployment, before the build.
+
+### 7.4 Seed the first time
+
+A fresh database has no categories, attribute lists or settings row. Run the
+seed once from your own machine, pointed at the production database:
+
+```bash
+# temporarily put the production DATABASE_URL in your local .env
+npm run seed
+```
+
+Then sign in at `https://your-site/<ADMIN_PATH>`, set the WhatsApp number, and
+delete the demo products once your own are in.
+
+### 7.5 What is different on Vercel
+
+- **Image uploads are resized in the browser** before they are sent, because
+  Vercel rejects request bodies over 4.5MB and phone photographs are bigger
+  than that. The server still runs the full Sharp pipeline on what arrives.
+- **Backups** export `content.json` (every row) plus a list of image URLs
+  rather than a database file and an uploads folder. The images themselves
+  stay in Blob, which is replicated.
+- **Rate limiting** for inquiry logging counts rows in the database rather
+  than using an in-memory counter, since serverless instances share no memory.
+- **Costs.** Neon and Blob have free tiers that suit a catalogue of this size;
+  both charge once you outgrow them.
+
+## 8. Deploying to a VPS instead
 
 Any small Linux server will do: 1 vCPU and 1GB of RAM is enough for this site.
 The instructions below are for Ubuntu 22.04/24.04 and assume a non-root user
 with sudo.
 
-### 7.1 Install Node, PM2 and Nginx
+### 8.1 Install Node, PM2 and Nginx
 
 ```bash
 sudo apt update && sudo apt install -y nginx git build-essential
@@ -211,10 +292,10 @@ sudo apt install -y nodejs
 sudo npm install -g pm2
 ```
 
-`build-essential` is needed because `better-sqlite3` and `sharp` compile or
-fetch native binaries during install.
+`build-essential` is needed because `sharp` fetches or compiles native
+binaries during install.
 
-### 7.2 Put the code on the server
+### 8.2 Put the code on the server
 
 ```bash
 sudo mkdir -p /var/www/ytonyx && sudo chown $USER:$USER /var/www/ytonyx
@@ -224,10 +305,10 @@ npm ci
 ```
 
 If you copy the project by hand rather than with git, do **not** copy
-`node_modules`, `.next`, `.env` or `prisma/dev.db` from your laptop — install
-and configure fresh on the server.
+`node_modules`, `.next` or `.env` from your laptop — install and configure
+fresh on the server.
 
-### 7.3 Configure
+### 8.3 Configure
 
 ```bash
 cp .env.example .env
@@ -235,7 +316,7 @@ nano .env
 ```
 
 ```env
-DATABASE_URL="file:./dev.db"
+DATABASE_URL="postgresql://user:password@host/db?sslmode=require"
 NEXT_PUBLIC_SITE_URL="https://ytonyx.com"
 ADMIN_PATH="studio-7h2k"
 ADMIN_EMAIL="you@example.com"
@@ -247,7 +328,7 @@ UPLOADS_DIR="/var/www/ytonyx/uploads"
 
 Use **new** secrets on the server — never the ones from your laptop.
 
-### 7.4 Build and start
+### 8.4 Build and start
 
 ```bash
 npx prisma migrate deploy
@@ -261,7 +342,7 @@ pm2 startup           # run the command it prints, to survive reboots
 
 The app is now on `http://127.0.0.1:3000`.
 
-### 7.5 Nginx in front
+### 8.5 Nginx in front
 
 ```bash
 sudo nano /etc/nginx/sites-available/ytonyx
@@ -305,7 +386,7 @@ sudo nginx -t && sudo systemctl reload nginx
 `X-Forwarded-For` matters: it is how rate limiting and the country column in
 the inquiry log see the real visitor rather than the proxy.
 
-### 7.6 Updating later
+### 8.6 Updating later
 
 ```bash
 cd /var/www/ytonyx
@@ -318,7 +399,7 @@ pm2 reload yt-onyx
 
 ---
 
-## 8. Connecting your domain with HTTPS
+## 9. Connecting your domain with HTTPS
 
 1. At your domain registrar, create two **A records** pointing at the server's
    IP address: one for `ytonyx.com`, one for `www`. Wait for them to
@@ -343,16 +424,21 @@ Do not run the admin over plain HTTP on a public server.
 
 ---
 
-## 9. Backups
+## 10. Backups
 
-Two things cannot be rebuilt from the code: **`prisma/dev.db`** and the
-**`uploads/`** folder.
+Two things cannot be rebuilt from the code: **the database** and the
+**uploaded images**.
 
-**From the admin:** Studio → Backup → *Download backup* gives you a zip with a
-consistent database snapshot (taken with SQLite's `VACUUM INTO`, so it is safe
-even if someone saves a product mid-backup) plus every image.
+**From the admin:** Studio → Backup → *Download backup* gives you a zip with
+`content.json` — every row of every table — plus either the uploads folder
+(local disk) or a list of image URLs (Vercel Blob). The admin password hash is
+redacted from the export on purpose.
 
-**Automatically on the server**, nightly at 03:00:
+**On Vercel:** Neon keeps automatic point-in-time backups and lets you branch
+the database; Vercel Blob is replicated. Still take the admin export now and
+then and keep it somewhere you control.
+
+**On a VPS**, nightly at 03:00:
 
 ```bash
 mkdir -p /var/backups/ytonyx
@@ -360,35 +446,14 @@ crontab -e
 ```
 
 ```cron
-0 3 * * * cd /var/www/ytonyx && sqlite3 prisma/dev.db ".backup '/var/backups/ytonyx/db-$(date +\%F).sqlite'" && tar -czf /var/backups/ytonyx/uploads-$(date +\%F).tar.gz uploads && find /var/backups/ytonyx -type f -mtime +30 -delete
+0 3 * * * pg_dump "$DATABASE_URL" | gzip > /var/backups/ytonyx/db-$(date +\%F).sql.gz && tar -czf /var/backups/ytonyx/uploads-$(date +\%F).tar.gz -C /var/www/ytonyx uploads && find /var/backups/ytonyx -type f -mtime +30 -delete
 ```
 
-(`sudo apt install -y sqlite3` for the `.backup` command.) Copy the folder
-off the machine regularly — a backup on the same server is not a backup.
+Copy the folder off the machine regularly — a backup on the same server is not
+a backup.
 
-**Restoring:** stop the app, put `dev.db` back in `prisma/`, restore the
-`uploads/` folder, start the app.
-
----
-
-## 10. Switching to PostgreSQL later
-
-The schema was written to be portable: money is stored as integer cents, there
-are no SQLite-only column types and no raw SQL in the application.
-
-1. `npm install @prisma/adapter-pg pg`
-2. In `prisma/schema.prisma`: `provider = "postgresql"`
-3. In `lib/prisma.ts`, replace the two `PrismaBetterSqlite3` lines with
-   `new PrismaPg({ connectionString: process.env.DATABASE_URL })`
-4. Put the connection string in `DATABASE_URL`
-5. `npx prisma migrate dev --name init-postgres` against the new database, then
-   re-enter your content or import it
-
-One thing to adjust by hand: the product search in `lib/catalog.ts` relies on
-SQLite's case-insensitive `LIKE`. On PostgreSQL, add `mode: "insensitive"` to
-the `contains` clauses — there is a comment at that spot.
-
----
+**Restoring:** recreate the schema with `prisma migrate deploy`, import
+`content.json` (or restore the SQL dump), and put the images back.
 
 ## 11. Moving images to S3 or Cloudinary later
 
@@ -401,9 +466,10 @@ local-disk implementation. Write a second implementation, export it as
 
 ## 12. Troubleshooting
 
-**The admin password never works.** The `$` characters in your bcrypt hash were
-expanded by `.env`. Escape them as `\$` or re-run `npm run admin:hash`. The
-server log says so explicitly when it detects a mangled hash.
+**The admin password never works.** In a `.env` file the `$` characters in a
+bcrypt hash must be escaped as `\$`, because .env expands variables. In the
+Vercel dashboard they must *not* be escaped. The server log says so explicitly
+when it detects a mangled hash.
 
 **I am locked out.** After five wrong attempts from one address, sign-in is
 blocked for fifteen minutes. To reset the password itself, run
@@ -413,9 +479,10 @@ password.
 **WhatsApp buttons open the contact page.** No number is saved yet — add it at
 Studio → Site settings.
 
-**Images do not appear after a deploy.** `UPLOADS_DIR` is probably pointing
-somewhere else, or the folder was not copied across. It is deliberately outside
-the build output so that uploads survive deployments.
+**Images do not appear after a deploy.** On Vercel, check
+`BLOB_PUBLIC_BASE_URL` matches your Blob store's address exactly. On a VPS,
+`UPLOADS_DIR` is probably pointing somewhere else, or the folder was not copied
+across; it sits outside the build output so uploads survive deployments.
 
 **Port 3000 is already in use.** Change `PORT` in `ecosystem.config.cjs` and
 the `proxy_pass` line in Nginx.
