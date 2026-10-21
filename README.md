@@ -245,10 +245,16 @@ adapter — so the work is configuration rather than code.
 Press **Deploy**. The build command is set in `vercel.json`:
 
 ```
-prisma migrate deploy && next build
+PRISMA_SCHEMA_DISABLE_ADVISORY_LOCK=true prisma migrate deploy && next build
 ```
 
 so the schema is created or updated on every deployment, before the build.
+
+The advisory lock is disabled deliberately. Prisma takes a session-level
+Postgres lock before migrating, and waits ten seconds for it; a serverless
+database that has gone to sleep can spend most of that budget just waking up,
+and the deployment then fails with `P1002`. The lock only guards against two
+migrations running at once, which a single deployment pipeline does not do.
 
 ### 7.4 Fill the catalogue the first time
 
