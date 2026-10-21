@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { del, head, put } from "@vercel/blob";
+import { del, get, head, put } from "@vercel/blob";
 
 /**
  * Storage adapter.
@@ -98,50 +98,28 @@ class LocalDiskStorage implements StorageAdapter {
 /**
  * Vercel Blob.
  *
- * A blob URL normally gets a random suffix chosen at upload time, which would
- * make it impossible to derive from the key. `addRandomSuffix: false` keeps
- * the two in step, so key and URL stay interchangeable.
+ * Two things vary between stores and are both discovered at runtime rather
+ * than configured by hand:
  *
- * Authentication has two shapes. A connected project on Vercel authenticates
- * through OIDC and gets no token at all — only BLOB_STORE_ID — while anywhere
- * else (a VPS, a script on a laptop) needs an explicit BLOB_READ_WRITE_TOKEN.
- * Both are supported, and the public address is derived from whichever of the
- * two is present.
+ *  - **Authentication.** A store connected to a Vercel project authenticates
+ *    through OIDC and gets only BLOB_STORE_ID; anywhere else (a VPS, a script
+ *    on a laptop) needs an explicit BLOB_READ_WRITE_TOKEN.
+ *  - **Access.** A store is created either public or private, and an upload
+ *    must match. The first upload tries both and remembers which one the
+ *    store accepts.
+ *
+ * Images are always served through /api/media rather than a blob URL: private
+ * blobs have no public URL at all, and routing both store types the same way
+ * keeps one URL shape, one cache policy and one thing to reason about.
  */
 class VercelBlobStorage implements StorageAdapter {
-  /** Learned from the first successful upload, in case the guess is wrong. */
-  private static observedBase: string | null = null;
-
-  private base(): string {
-    const configured = process.env.BLOB_PUBLIC_BASE_URL?.trim();
-    if (configured) return configured.replace(/\/+$/, "");
-
-    if (VercelBlobStorage.observedBase) return VercelBlobStorage.observedBase;
-
-    // "store_MhNcz1vDhbGyp0Vq" -> "mhncz1vdhbgyp0vq.public.blob…"
-    const storeId = process.env.BLOB_STORE_ID?.trim().replace(/^store_/, "");
-    // "vercel_blob_rw_<storeId>_<secret>"
-    const fromToken = process.env.BLOB_READ_WRITE_TOKEN?.trim().split("_")[3];
-    const id = storeId || fromToken;
-
-    if (!id) {
-      throw new Error(
-        "No blob store is configured. Expected BLOB_STORE_ID (set automatically when a Vercel Blob store is connected) or BLOB_READ_WRITE_TOKEN.",
-      );
-    }
-
-    return `https://${id.toLowerCase()}.public.blob.vercel-storage.com`;
-  }
-
-  /** Keeps the derived address honest by comparing it with a real upload. */
-  private learnBase(uploadedUrl: string) {
-    try {
-      const origin = new URL(uploadedUrl).origin;
-      if (origin !== this.base()) VercelBlobStorage.observedBase = origin;
-    } catch {
-      // A malformed URL is not worth failing an upload over.
-    }
-  }
+  /** Learned from the first successful call; "private" is tried first. */
+  private static access: "public" | "private" | null =
+    process.env.BLOB_ACCESS === "public"
+      ? "public"
+      : process.env.BLOB_ACCESS === "private"
+        ? "private"
+        : null;
 
   private assertKey(key: string) {
     if (!isValidStorageKey(key)) {
@@ -149,38 +127,93 @@ class VercelBlobStorage implements StorageAdapter {
     }
   }
 
+  /**
+   * Runs an operation against whichever access level the store uses, learning
+   * the answer from the first success. Only the access-mismatch error is
+   * retried; everything else is a real failure and is rethrown at once.
+   */
+  private async withAccess<T>(
+    operation: (access: "public" | "private") => Promise<T>,
+  ): Promise<T> {
+    const known = VercelBlobStorage.access;
+    const order: ("public" | "private")[] = known
+      ? [known]
+      : ["private", "public"];
+
+    let lastError: unknown;
+
+    for (const access of order) {
+      try {
+        const result = await operation(access);
+        VercelBlobStorage.access = access;
+        return result;
+      } catch (error) {
+        lastError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/access|private store|public store/i.test(message)) throw error;
+      }
+    }
+
+    throw lastError;
+  }
+
   async save(key: string, data: Buffer): Promise<void> {
     this.assertKey(key);
-    const result = await put(key, data, {
-      access: "public",
-      addRandomSuffix: false,
-      // Keys are unique per upload, so the bytes behind one never change.
-      cacheControlMaxAge: 31536000,
-      allowOverwrite: true,
-    });
-    this.learnBase(result.url);
+    await this.withAccess((access) =>
+      put(key, data, {
+        access,
+        // Without this the URL gets a random suffix and stops matching the key.
+        addRandomSuffix: false,
+        // Keys are unique per upload, so the bytes behind one never change.
+        cacheControlMaxAge: 31536000,
+        allowOverwrite: true,
+      }),
+    );
   }
 
   async read(key: string): Promise<Buffer> {
-    const response = await fetch(this.url(key));
-    if (!response.ok) throw new Error(`Blob not found: ${key}`);
-    return Buffer.from(await response.arrayBuffer());
+    const { stream } = await this.openStream(key);
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+    return Buffer.concat(chunks);
   }
 
   async stream(key: string) {
-    const buffer = await this.read(key);
+    const { stream, size } = await this.openStream(key);
+    return { stream, size };
+  }
+
+  /** Shared by read() and stream(): one authenticated fetch of the blob. */
+  private async openStream(key: string) {
+    this.assertKey(key);
+
+    const result = await this.withAccess((access) =>
+      get(key, { access }).then((value) => {
+        if (!value) throw new Error(`Blob not found: ${key}`);
+        return value;
+      }),
+    );
+
     const { Readable } = await import("node:stream");
-    return { stream: Readable.from(buffer), size: buffer.length };
+    const size = Number(result.headers?.get("content-length") ?? 0);
+
+    return {
+      stream: Readable.fromWeb(
+        result.stream as Parameters<typeof Readable.fromWeb>[0],
+      ),
+      size: Number.isFinite(size) ? size : 0,
+    };
   }
 
   async delete(key: string): Promise<void> {
     this.assertKey(key);
-    await del(this.url(key));
+    await del(key);
   }
 
   async exists(key: string): Promise<boolean> {
     try {
-      await head(this.url(key));
+      this.assertKey(key);
+      await head(key);
       return true;
     } catch {
       return false;
@@ -188,8 +221,7 @@ class VercelBlobStorage implements StorageAdapter {
   }
 
   url(key: string): string {
-    this.assertKey(key);
-    return `${this.base()}/${key}`;
+    return `/api/media/${key}`;
   }
 }
 
