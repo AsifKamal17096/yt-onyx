@@ -1,0 +1,232 @@
+// YT Onyx — data model
+//
+// Portability note: the only Postgres-specific change needed later is
+//   datasource db { provider = "postgresql" }
+// plus swapping the driver adapter in lib/prisma.ts (@prisma/adapter-pg) and
+// the DATABASE_URL. No SQLite-only types or raw SQL are used anywhere.
+// Money is stored as INTEGER cents so it stays exact on every engine.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// Stock status shown on the product page.
+enum Availability {
+  IN_STOCK
+  MADE_TO_ORDER
+  OUT_OF_STOCK
+}
+
+/// Where a WhatsApp click came from, for the admin dashboard.
+enum InquirySource {
+  PRODUCT
+  INQUIRY_LIST
+  FLOATING
+  CONTACT
+}
+
+model Category {
+  id             String    @id @default(cuid())
+  name           String
+  slug           String    @unique
+  description    String?
+  /// Storage key of the category image (see lib/storage.ts), not a public URL.
+  imageKey       String?
+  sortOrder      Int       @default(0)
+  seoTitle       String?
+  seoDescription String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  products Product[]
+
+  @@index([sortOrder])
+}
+
+model StoneType {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  slug      String    @unique
+  sortOrder Int       @default(0)
+  products  Product[]
+
+  @@index([sortOrder])
+}
+
+model Color {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  slug      String    @unique
+  /// Optional hex swatch shown in the shop filters, e.g. "#C9B79C".
+  hex       String?
+  sortOrder Int       @default(0)
+  products  Product[]
+
+  @@index([sortOrder])
+}
+
+model Finish {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  slug      String    @unique
+  sortOrder Int       @default(0)
+  products  Product[]
+
+  @@index([sortOrder])
+}
+
+model Product {
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
+  sku  String @unique
+
+  categoryId  String
+  category    Category   @relation(fields: [categoryId], references: [id])
+  stoneTypeId String?
+  stoneType   StoneType? @relation(fields: [stoneTypeId], references: [id])
+  colorId     String?
+  color       Color?     @relation(fields: [colorId], references: [id])
+  finishId    String?
+  finish      Finish?    @relation(fields: [finishId], references: [id])
+
+  /// Price in USD cents. 125000 === $1,250.00
+  priceCents Int
+  /// Optional "was" price in USD cents, shown struck through when higher.
+  compareAtCents Int?
+
+  /// Dimensions are stored in the unit the admin entered them in.
+  length         Float?
+  width          Float?
+  height         Float?
+  dimensionUnit  String  @default("cm")
+  weight         Float?
+  weightUnit     String  @default("kg")
+
+  shortDescription String
+  description      String
+  careInstructions String?
+
+  availability Availability @default(IN_STOCK)
+  featured     Boolean      @default(false)
+  published    Boolean      @default(false)
+  /// Marks the seeded demo catalogue so it can be bulk-deleted from admin.
+  isDemo       Boolean      @default(false)
+
+  seoTitle       String?
+  seoDescription String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  publishedAt DateTime?
+
+  images    ProductImage[]
+  inquiries Inquiry[]
+
+  @@index([categoryId])
+  @@index([published])
+  @@index([createdAt])
+  @@index([featured])
+  @@index([priceCents])
+  @@index([published, createdAt])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// Storage keys produced by the image pipeline (lib/images.ts).
+  fileKey   String
+  thumbKey  String
+  width     Int
+  height    Int
+  /// Tiny inline base64 WebP used as the blur placeholder.
+  blurDataUrl String
+  alt       String  @default("")
+  sortOrder Int     @default(0)
+  isPrimary Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([productId, sortOrder])
+}
+
+model Inquiry {
+  id        String        @id @default(cuid())
+  productId String?
+  product   Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+  /// Snapshot so the log stays readable after a product is deleted.
+  productName String?
+  quantity  Int           @default(1)
+  source    InquirySource @default(PRODUCT)
+  /// Two-letter country code from CDN/proxy headers when available.
+  country   String?
+  /// Salted hash of the visitor IP — used for rate limiting, never shown.
+  ipHash    String?
+  createdAt DateTime      @default(now())
+
+  @@index([createdAt])
+  @@index([productId])
+}
+
+/// Customer words shown on the home page, managed from the admin panel.
+model Testimonial {
+  id        String   @id @default(cuid())
+  quote     String
+  name      String
+  location  String
+  sortOrder Int      @default(0)
+  published Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([published, sortOrder])
+}
+
+/// Single-row table (id is always 1) holding everything the owner can edit.
+model SiteSettings {
+  id Int @id @default(1)
+
+  /// Stored as entered (e.g. "+92 300 1234567"); normalised to digits for wa.me.
+  whatsappNumber   String?
+  whatsappTemplate String  @default("Hello YT Onyx! I'm interested in ordering:\nProduct: {name}\nSKU: {sku}\nPrice: {price} USD\nQuantity: {qty}\nLink: {url}\n\nPlease confirm availability, shipping cost and delivery time to my country.")
+
+  heroHeadline String  @default("Stone shaped by hand, since 1992")
+  heroSubtext  String  @default("Onyx and marble pieces carved, turned and polished in our workshop, then shipped to homes in over 40 countries.")
+  heroImageKey String?
+
+  announcement String?
+  contactEmail String  @default("")
+  contactPhone String?
+  addressLine  String  @default("")
+  mapEmbedUrl  String?
+
+  instagramUrl String?
+  facebookUrl  String?
+  pinterestUrl String?
+  tiktokUrl    String?
+
+  /// Uploaded logo replacement; falls back to the bundled brand logo.
+  logoKey String?
+
+  /// bcrypt hash set from the admin "Change password" page.
+  /// When null, ADMIN_PASSWORD_HASH from the environment is used.
+  adminPasswordHash String?
+
+  updatedAt DateTime @updatedAt
+}
+
+/// Durable login throttling: survives restarts, unlike an in-memory counter.
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  ipHash    String
+  success   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([ipHash, createdAt])
+}

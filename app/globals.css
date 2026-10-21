@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   YT Onyx design tokens
+   Palette comes from the logo: deep black, warm white, honey-onyx amber.
+   Tailwind v4 turns every --color-* token below into utilities
+   (bg-ink, text-cream, border-line, …).
+--------------------------------------------------------------------------- */
+@theme {
+  --color-ink: #0a0a0a;
+  --color-ink-soft: #15140f;
+  --color-ink-muted: #2b2825;
+
+  --color-cream: #f5f2ec;
+  --color-cream-dim: #ebe6dc;
+  --color-cream-deep: #ddd6c8;
+
+  --color-gold: #b8935a;
+  --color-gold-soft: #d6bb8c;
+  --color-gold-deep: #8d6f3f;
+
+  --color-line: #e3ddd1;
+  --color-line-strong: #cfc6b5;
+  --color-line-dark: #302c27;
+
+  --color-muted: #6e675c;
+  --color-muted-dark: #a79e8f;
+
+  --font-serif: var(--font-cormorant), "Cormorant Garamond", Georgia, serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  --radius-xs: 2px;
+
+  /* Subtle, slow motion suits the brand better than springy defaults. */
+  --ease-brand: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --animate-fade-up: fade-up 0.7s var(--ease-brand) both;
+  --animate-fade-in: fade-in 0.6s var(--ease-brand) both;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--color-cream);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-serif);
+    font-weight: 300;
+    letter-spacing: -0.015em;
+  }
+
+  /* One visible, consistent focus ring everywhere — keyboard users first. */
+  :focus-visible {
+    outline: 2px solid var(--color-gold);
+    outline-offset: 3px;
+  }
+
+  ::selection {
+    background-color: var(--color-gold);
+    color: var(--color-ink);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+/* Page gutter used by every section so the grid never shifts between pages. */
+@utility container-page {
+  width: 100%;
+  margin-inline: auto;
+  max-width: 80rem;
+  padding-inline: 1.25rem;
+
+  @media (width >= 48rem) {
+    padding-inline: 2rem;
+  }
+
+  @media (width >= 80rem) {
+    padding-inline: 2.5rem;
+  }
+}
+
+/* Small caps label used above section headings. */
+@utility eyebrow {
+  font-size: 0.6875rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+
+/* Thin gold rule that reads as a hand-drawn underline at small sizes. */
+@utility rule-gold {
+  display: block;
+  width: 3rem;
+  height: 1px;
+  background-color: var(--color-gold);
+}
