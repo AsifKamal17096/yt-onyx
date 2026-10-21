@@ -216,9 +216,9 @@ adapter — so the work is configuration rather than code.
    **Add New → Project** and import this repository. Do not deploy yet.
 2. In the project, open **Storage → Create Database → Neon (Postgres)**.
    Vercel adds `DATABASE_URL` to the project automatically.
-3. **Storage → Create → Blob**. Vercel adds `BLOB_READ_WRITE_TOKEN`.
-4. Open the Blob store and copy its public address — it looks like
-   `https://abc123xyz.public.blob.vercel-storage.com`.
+3. **Storage → Create Storage → Blob**, then connect it to the project.
+   Vercel adds `BLOB_STORE_ID`; connected projects authenticate through OIDC,
+   so there is no read-write token to copy and none is needed.
 
 ### 7.2 Environment variables
 
@@ -227,8 +227,7 @@ adapter — so the work is configuration rather than code.
 | Name | Value |
 | --- | --- |
 | `DATABASE_URL` | added by the Neon integration |
-| `BLOB_READ_WRITE_TOKEN` | added by the Blob integration |
-| `BLOB_PUBLIC_BASE_URL` | the address from step 4, no trailing slash |
+| `BLOB_STORE_ID` | added when the Blob store is connected |
 | `NEXT_PUBLIC_SITE_URL` | `https://your-domain.com` (or the `.vercel.app` URL at first) |
 | `ADMIN_PATH` | something unguessable, e.g. `studio-7h2k` |
 | `ADMIN_EMAIL` | the address you sign in with |

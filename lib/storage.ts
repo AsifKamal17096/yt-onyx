@@ -102,26 +102,45 @@ class LocalDiskStorage implements StorageAdapter {
  * make it impossible to derive from the key. `addRandomSuffix: false` keeps
  * the two in step, so key and URL stay interchangeable.
  *
- * The public address is worked out from the store id embedded in
- * BLOB_READ_WRITE_TOKEN ("vercel_blob_rw_<storeId>_<secret>"), which saves
- * copying it by hand. BLOB_PUBLIC_BASE_URL overrides that if Vercel ever
- * changes the token format.
+ * Authentication has two shapes. A connected project on Vercel authenticates
+ * through OIDC and gets no token at all — only BLOB_STORE_ID — while anywhere
+ * else (a VPS, a script on a laptop) needs an explicit BLOB_READ_WRITE_TOKEN.
+ * Both are supported, and the public address is derived from whichever of the
+ * two is present.
  */
 class VercelBlobStorage implements StorageAdapter {
+  /** Learned from the first successful upload, in case the guess is wrong. */
+  private static observedBase: string | null = null;
+
   private base(): string {
     const configured = process.env.BLOB_PUBLIC_BASE_URL?.trim();
     if (configured) return configured.replace(/\/+$/, "");
 
-    const token = process.env.BLOB_READ_WRITE_TOKEN?.trim() ?? "";
-    const storeId = token.split("_")[3];
+    if (VercelBlobStorage.observedBase) return VercelBlobStorage.observedBase;
 
-    if (!storeId) {
+    // "store_MhNcz1vDhbGyp0Vq" -> "mhncz1vdhbgyp0vq.public.blob…"
+    const storeId = process.env.BLOB_STORE_ID?.trim().replace(/^store_/, "");
+    // "vercel_blob_rw_<storeId>_<secret>"
+    const fromToken = process.env.BLOB_READ_WRITE_TOKEN?.trim().split("_")[3];
+    const id = storeId || fromToken;
+
+    if (!id) {
       throw new Error(
-        "Could not work out the blob address from BLOB_READ_WRITE_TOKEN. Set BLOB_PUBLIC_BASE_URL to your store's https://<id>.public.blob.vercel-storage.com address.",
+        "No blob store is configured. Expected BLOB_STORE_ID (set automatically when a Vercel Blob store is connected) or BLOB_READ_WRITE_TOKEN.",
       );
     }
 
-    return `https://${storeId.toLowerCase()}.public.blob.vercel-storage.com`;
+    return `https://${id.toLowerCase()}.public.blob.vercel-storage.com`;
+  }
+
+  /** Keeps the derived address honest by comparing it with a real upload. */
+  private learnBase(uploadedUrl: string) {
+    try {
+      const origin = new URL(uploadedUrl).origin;
+      if (origin !== this.base()) VercelBlobStorage.observedBase = origin;
+    } catch {
+      // A malformed URL is not worth failing an upload over.
+    }
   }
 
   private assertKey(key: string) {
@@ -132,13 +151,14 @@ class VercelBlobStorage implements StorageAdapter {
 
   async save(key: string, data: Buffer): Promise<void> {
     this.assertKey(key);
-    await put(key, data, {
+    const result = await put(key, data, {
       access: "public",
       addRandomSuffix: false,
       // Keys are unique per upload, so the bytes behind one never change.
       cacheControlMaxAge: 31536000,
       allowOverwrite: true,
     });
+    this.learnBase(result.url);
   }
 
   async read(key: string): Promise<Buffer> {
@@ -173,8 +193,16 @@ class VercelBlobStorage implements StorageAdapter {
   }
 }
 
-/** True when the app is running against Vercel Blob rather than local disk. */
-export const usingBlobStorage = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+/**
+ * True when the app is running against Vercel Blob rather than local disk.
+ *
+ * A connected project on Vercel authenticates through OIDC and receives only
+ * BLOB_STORE_ID — checking for a read-write token would miss it entirely and
+ * silently fall back to a filesystem that cannot be written to.
+ */
+export const usingBlobStorage = Boolean(
+  process.env.BLOB_STORE_ID || process.env.BLOB_READ_WRITE_TOKEN,
+);
 
 export const storage: StorageAdapter = usingBlobStorage
   ? new VercelBlobStorage()
