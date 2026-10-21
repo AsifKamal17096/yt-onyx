@@ -63,6 +63,32 @@ function askHidden(question) {
 async function main() {
   console.log("\nYT Onyx — admin password hash\n");
 
+  // A password given as an argument skips the prompt. Some shells and
+  // embedded terminals cannot accept typed input at all, and a prompt that
+  // silently reads nothing is worse than no prompt.
+  const fromArgument = process.argv.slice(2).join(" ").trim();
+
+  if (fromArgument) {
+    if (fromArgument.length < MIN_LENGTH) {
+      console.error(`Password must be at least ${MIN_LENGTH} characters.`);
+      process.exit(1);
+    }
+    console.log("Using the password given on the command line.");
+    console.log("It is visible in this window — clear it when you are done.\n");
+    return printHash(await bcrypt.hash(fromArgument, COST));
+  }
+
+  if (!process.stdin.isTTY) {
+    console.error(
+      "This window cannot accept a typed password.\n\n" +
+        "Either pass it as an argument:\n" +
+        '  npm run admin:hash -- "your password here"\n\n' +
+        "or run the same command in a normal terminal window, where typing\n" +
+        "is hidden.\n",
+    );
+    process.exit(1);
+  }
+
   const password = await askHidden("New admin password: ");
   if (password.length < MIN_LENGTH) {
     console.error(`Password must be at least ${MIN_LENGTH} characters.`);
@@ -75,8 +101,10 @@ async function main() {
     process.exit(1);
   }
 
-  const hash = await bcrypt.hash(password, COST);
+  return printHash(await bcrypt.hash(password, COST));
+}
 
+function printHash(hash) {
   // A bcrypt hash is full of $ signs, and .env files expand those. The two
   // destinations therefore need different forms of the same hash, which is
   // the single most common way to end up locked out.
