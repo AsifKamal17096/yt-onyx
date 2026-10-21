@@ -100,18 +100,28 @@ class LocalDiskStorage implements StorageAdapter {
  *
  * A blob URL normally gets a random suffix chosen at upload time, which would
  * make it impossible to derive from the key. `addRandomSuffix: false` keeps
- * the two in step, and BLOB_PUBLIC_BASE_URL (the store's
- * https://<id>.public.blob.vercel-storage.com address) completes the URL.
+ * the two in step, so key and URL stay interchangeable.
+ *
+ * The public address is worked out from the store id embedded in
+ * BLOB_READ_WRITE_TOKEN ("vercel_blob_rw_<storeId>_<secret>"), which saves
+ * copying it by hand. BLOB_PUBLIC_BASE_URL overrides that if Vercel ever
+ * changes the token format.
  */
 class VercelBlobStorage implements StorageAdapter {
   private base(): string {
     const configured = process.env.BLOB_PUBLIC_BASE_URL?.trim();
-    if (!configured) {
+    if (configured) return configured.replace(/\/+$/, "");
+
+    const token = process.env.BLOB_READ_WRITE_TOKEN?.trim() ?? "";
+    const storeId = token.split("_")[3];
+
+    if (!storeId) {
       throw new Error(
-        "BLOB_PUBLIC_BASE_URL is not set. Copy the https://<id>.public.blob.vercel-storage.com address from your Vercel Blob store.",
+        "Could not work out the blob address from BLOB_READ_WRITE_TOKEN. Set BLOB_PUBLIC_BASE_URL to your store's https://<id>.public.blob.vercel-storage.com address.",
       );
     }
-    return configured.replace(/\/+$/, "");
+
+    return `https://${storeId.toLowerCase()}.public.blob.vercel-storage.com`;
   }
 
   private assertKey(key: string) {

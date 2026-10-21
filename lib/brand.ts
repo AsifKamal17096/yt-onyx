@@ -33,9 +33,19 @@ export const BRAND = {
 /**
  * Public origin, without a trailing slash. Used for canonical URLs, the
  * sitemap, Open Graph tags and the product links inside WhatsApp messages.
+ *
+ * Set NEXT_PUBLIC_SITE_URL once a real domain is attached. Until then, Vercel
+ * supplies the deployment's own address, so links are never left pointing at
+ * localhost in production.
  */
+const vercelUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  : undefined;
+
 export const SITE_URL = (
-  process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"
+  process.env.NEXT_PUBLIC_SITE_URL ||
+  vercelUrl ||
+  "http://localhost:3000"
 ).replace(/\/+$/, "");
 
 export function absoluteUrl(pathname: string): string {
