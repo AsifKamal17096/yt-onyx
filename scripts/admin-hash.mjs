@@ -12,7 +12,28 @@ import bcrypt from "bcryptjs";
 const MIN_LENGTH = 10;
 const COST = 12;
 
+/**
+ * Lines piped in when there is no terminal. Read once, in full: opening a
+ * second readline interface on the same stream would find it already drained.
+ */
+let pipedLines = null;
+
+async function readPipedLines() {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  return Buffer.concat(chunks).toString("utf8").split(/\r?\n/);
+}
+
 function askHidden(question) {
+  // Without a terminal there is nothing to hide, so take the next piped line
+  // rather than hanging on a muted prompt.
+  if (!process.stdin.isTTY) {
+    return (async () => {
+      pipedLines ??= await readPipedLines();
+      return pipedLines.shift() ?? "";
+    })();
+  }
+
   return new Promise((resolve) => {
     const rl = readline.createInterface({
       input: process.stdin,
@@ -56,11 +77,28 @@ async function main() {
 
   const hash = await bcrypt.hash(password, COST);
 
-  console.log("Add this line to your .env file (keep the quotes):\n");
-  console.log(`ADMIN_PASSWORD_HASH="${hash}"\n`);
+  // A bcrypt hash is full of $ signs, and .env files expand those. The two
+  // destinations therefore need different forms of the same hash, which is
+  // the single most common way to end up locked out.
+  const escaped = hash.replaceAll("$", "\\$");
+
+  console.log("The same hash, in the two forms you might need.\n");
+
+  console.log("1. HOSTING DASHBOARD (Vercel, Netlify, Railway…)");
+  console.log("   Paste exactly this, with no quotes:\n");
+  console.log(`   ${hash}\n`);
+
+  console.log("2. A .env FILE on your machine or a server");
+  console.log("   Paste this line, backslashes included:\n");
+  console.log(`   ADMIN_PASSWORD_HASH="${escaped}"\n`);
   console.log(
-    "Then restart the server. If a password was set from the admin panel\n" +
-      "earlier, that one wins — change it there instead, or clear it with:\n" +
+    "   Without the backslashes .env eats part of the hash and the\n" +
+      "   password silently never works.\n",
+  );
+
+  console.log(
+    "If a password was set from the admin panel earlier, that one wins —\n" +
+      "change it there instead, or clear it with:\n" +
       "  npm run admin:reset-db-password\n",
   );
 }
