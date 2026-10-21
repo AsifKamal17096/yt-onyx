@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { defineConfig } from "prisma/config";
-import { resolveDatabaseUrl } from "./lib/database-url";
+import { databaseUrlOrEmpty } from "./lib/database-url";
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
@@ -10,7 +10,10 @@ export default defineConfig({
     seed: "tsx prisma/seed.ts",
   },
   datasource: {
-    // Resolved so the CLI and the app always open the same file.
-    url: resolveDatabaseUrl(),
+    // Read without throwing: this file is loaded by every Prisma command,
+    // including `prisma generate`, which runs during `npm install` and needs
+    // no database at all. Commands that do need one fail on their own with a
+    // clear message.
+    url: databaseUrlOrEmpty(),
   },
 });
